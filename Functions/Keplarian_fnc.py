@@ -1,6 +1,6 @@
 import numpy as np
 import math 
-
+import matplotlib.pyplot as plt
 
 # Angle Manupulation 
 # Wrapto2pi
@@ -64,20 +64,17 @@ def E_thst(thst,e):
 # With just M (mean Anomaly)
 def E_M(M, e, acc = 10^-12, **kwargs):
     E_n = M
-    n = 0
     for n in range(100):    
-        E_n1 = (E_n + e*math.sin(E_n) - M)/(1-e*math.cos(E_n))
-        error = abs(E_n1-E_n)
+        E_n1 = E_n - (E_n - e*math.sin(E_n) - M)/(1-e*math.cos(E_n))
+        error = abs(E_n1 - E_n)
+        
         if error < acc:
-            if 'n_count' in kwargs and kwargs["n_count"] == True:
-                return (E_n1, n)
-            else:
-                return E_n1
+            break
         
         E_n = E_n1
     
     if 'n_count' in kwargs and kwargs["n_count"] == True:
-        return E_n1, n
+        return [E_n1, n+1]
     else:
         return E_n1
         
@@ -102,6 +99,9 @@ def v_a_r(miu, a,r):
 def thst_rvec_vvec_p_e(r_vec,v_vec,p,e):
   return np.sign(np.dot(v_vec,r_vec)) * math.acos(1/e*(p/np.linalg.norm(r_vec) - 1))
 
+
+def thst_E_e(E, e):
+    return 2*np.arctan(np.sqrt((1+e)/(1-e)) * np.tan(E/2))
 
 ##### Change in True Anomaly #####
 def delthst_r1vec_r2vec_hunit(r1_vec,r2_vec,h_unit):
@@ -175,7 +175,11 @@ def sat2ECI(Omega, i, theta):
 
 
 
-
+#### Radial to inertial ####
+def rad_2_cart(r,angle):
+    x = r*np.sin(angle)
+    y = r*np.cos(angle)
+    return x,y
 
 ##### Plot Functions #####
 # 3d axis
@@ -189,4 +193,15 @@ def lims3dplot(xmax,xmin,ymax,ymin,zmax,zmin):
     upper_lim = np.array([-max_range, -max_range, -max_range]) + mids
     lower_lim = np.array([max_range, max_range, max_range]) + mids
     return lower_lim, upper_lim
+
+
+#### Plot 2d ####
+def plot_2d(a, e, thst, ax, vis = '-'):
+    r = a*(1-e**2)/(1+e*np.cos(thst))
+    x = r*np.cos(thst)
+    y = r*np.sin(thst)
+    
+    ax.plot(x,y, vis)
+
+
   
