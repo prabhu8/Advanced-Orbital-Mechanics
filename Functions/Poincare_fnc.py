@@ -1,4 +1,10 @@
+from typing import final
+from matplotlib import lines
 import numpy as np
+from scipy.integrate import solve_ivp
+import matplotlib.pyplot as plt
+import pandas as pd
+
 
 #### Dimensionalize ####
 def L_2_dim(length, l_star):
@@ -25,11 +31,13 @@ def L2_Newton(miu, gamma_n, acc = 10**-8):
         
         gamma_n1 = gamma_n - f_n/f_n_p        
         if abs(gamma_n1-gamma_n) < acc:
-            break
+            L2_nondim = 1 - miu + gamma_n
+            return gamma_n1, L2_nondim
         
         gamma_n = gamma_n1
 
     L2_nondim = 1 - miu + gamma_n
+    print("Warning: solution did not converge to tolerance in ", n, 'iterations.')
     return gamma_n1, L2_nondim
 
 
@@ -41,11 +49,13 @@ def L1_Newton(miu, gamma_n, acc = 10**-8):
         
         gamma_n1 = gamma_n - f_n/f_n_p        
         if abs(gamma_n1-gamma_n) < acc:
-            break
+            L1_nondim = 1 - miu - gamma_n
+            return gamma_n1, L1_nondim
         
         gamma_n = gamma_n1
 
     L1_nondim = 1 - miu - gamma_n
+    print("Warning: solution did not converge to tolerance in ", n, 'iterations.')
     return gamma_n1, L1_nondim
 
 def L3_Newton(miu, gamma_n, acc = 10**-8):
@@ -57,14 +67,16 @@ def L3_Newton(miu, gamma_n, acc = 10**-8):
         
         gamma_n1 = gamma_n - f_n/f_n_p        
         if abs(gamma_n1-gamma_n) < acc:
-            break
+            L3_nondim = -gamma_n - miu
+            return gamma_n1, L3_nondim
         
         gamma_n = gamma_n1
 
     L3_nondim = -gamma_n - miu
+    print("Warning: solution did not converge to tolerance in ", n, 'iterations.')
     return gamma_n1, L3_nondim
 
-# def colin_Lagrange(xi0):
+
 def L4_L5(miu, x, acc = 10**-8):
     x = x.reshape(2,1)
     
@@ -108,8 +120,23 @@ def U_ii(x, y, z, miu):
     return U_xx, U_yy, U_zz, U_xy, U_xz, U_yz
 
 
+#### A_t ####
+def A_t(x, y, z, miu):
+    U_xx, U_yy, U_zz, U_xy, U_xz, U_yz = U_ii(x, y, z, miu)
+    upp_l = np.zeros((3,3))
+    upp_r = np.eye(3)
+    bot_l = np.array([[U_xx, U_xy, U_xz], [U_xy, U_yy, U_yz], [U_xz, U_yz, U_zz]])
+    bot_r = np.array([[0,2,0],[-2,0,0],[0,0,0]]) 
+
+    A = np.block([ 
+                  [upp_l, upp_r],
+                  [bot_l, bot_r]
+                    ])
+    return A
+
+
 #### CRBP ####
-def cr3bp_df(t, x, miu):
+def cr3bp_df(t, x, miu, phi=False):
     dx = np.zeros((6,))
     d, r = d_n_r(x[0], x[1], x[2], miu)
     
@@ -119,6 +146,11 @@ def cr3bp_df(t, x, miu):
     dx[3] = 2*x[4] + x[0] - (1-miu)*(x[0]+miu)/d**3 - miu*(x[0]-1+miu)/r**3
     dx[4] = -2*x[3] + x[1] - (1-miu)*x[1]/d**3 - miu*x[1]/r**3
     dx[5] = -(1-miu)*x[2]/d**3 - miu*x[2]/r**3
+    
+    if phi:
+        phi = x[6:].reshape((6,6))
+        phi_dot = A_t(x[0], x[1], x[2], miu) @ phi
+        dx = np.append(dx, phi_dot.reshape((36,)))  
     
     return dx
 
@@ -135,3 +167,73 @@ def Lagrange_var_df(t, x, miu, U_xx, U_yy, U_zz, U_xy):
     dx[5] = U_zz*x[2]
     
     return dx
+
+#### Targeter ####
+def target(IC, miu, t_span, target, changeable=('x_dot_0', 'y_dot_0'), tol=10**-6, stop=False, change_tf = False, plot=False, attempts=10, axs=np.NaN):
+    # Initialize
+    col_name = ['x_0','y_0', 'z_0', 'x_dot_0', 'y_dot_0', 'z_dot_0']
+    row_name = ['x_f','y_f', 'z_f', 'x_dot_f', 'y_dot_f', 'z_dot_f']
+    ind_0 = np.in1d(col_name, changeable)
+    ind_f = np.in1d(row_name, list(target.keys()))
+    
+
+    
+    # Condition (depending on condition)
+    def event(t,x):
+        return x[1]
+    
+    event.direction = 0
+    event.terminal = False
+    
+    if stop:
+        event.terminal = True
+    
+
+    for n in range(attempts):
+        IC = np.append(IC,  np.eye(6).reshape((36,)))
+        traj = solve_ivp(lambda t, x: cr3bp_df(t, x, miu, phi=True), t_span , IC, method='RK45', 
+                 rtol=10**-12, atol=10**-16, events=event)
+        
+        # Choose phi 
+        phi_tf = traj.y[6:,-1].reshape((6,6))
+        phi_tf = phi_tf[ind_f][:,ind_0]
+        # Adjust for changing time
+        if change_tf:
+            i, j = phi_tf.shape
+            acc = cr3bp_df(0, traj.y[:6,-1], miu, phi=False)
+            phi_tf = np.hstack((phi_tf, acc[ind_f].reshape(i,1)))
+        
+
+        # Choose Error
+        final_state = traj.y[:6,-1]
+        error = np.array(list(target.values())) - final_state[ind_f]   
+       
+
+        if plot:
+            if n == 0 or max(abs(error)) < tol:
+                l_style = '-'
+            else:
+                l_style = '--'
+            axs.plot(traj.y[0,:], traj.y[1,:], label=('Attempt - ' + str(n)), linestyle = l_style, alpha = 0.7)
+        
+    
+        
+        # Make the Change in IC
+        del_rv = np.linalg.inv(phi_tf) @ error
+        
+        if max(abs(error)) < tol:
+            return IC, traj.y[:,-1], t_span[-1]
+        
+        # New initial conditions
+        del_IC = np.zeros((6,))
+        if change_tf:
+            del_IC[ind_0] = del_rv[:-1]
+            t_span[1] = t_span[1] + del_rv[-1]          
+        else:
+            del_IC[ind_0] = del_rv
+        
+        IC = IC[:6] + del_IC
+    
+    print("Warning: solution did not converge to tolerance in ", n, 'iterations.')
+    return IC, traj.y[:,-1], t_span[-1]
+        
