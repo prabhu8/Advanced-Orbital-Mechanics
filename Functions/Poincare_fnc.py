@@ -217,9 +217,8 @@ def target(IC, miu, t_span, target, changeable=('x_dot_0', 'y_dot_0'), tol=10**-
             axs.plot(traj.y[0,:], traj.y[1,:], label=('Attempt - ' + str(n)), linestyle = l_style, alpha = 0.7)
         
     
-        
         # Make the Change in IC
-        del_rv = np.linalg.inv(phi_tf) @ error
+        del_rv = np.linalg.pinv(phi_tf) @ error
         
         if max(abs(error)) < tol:
             return IC, traj.y[:,-1], t_span[-1]
